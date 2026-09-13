@@ -785,15 +785,18 @@
     addCartBtn.textContent = 'Creando pedido…';
     cartMsg.textContent = '';
 
-    var mutation = 'mutation CartCreate($lines: [CartLineInput!]!) {' +
-      ' cartCreate(input: { lines: $lines }) {' +
+    var mutation = 'mutation CartCreate($lines: [CartLineInput!]!, $country: CountryCode) {' +
+      ' cartCreate(input: { lines: $lines, buyerIdentity: { countryCode: $country } }) {' +
       '   cart { id checkoutUrl }' +
       '   userErrors { field message }' +
       ' }' +
       '}';
 
-    shopifyFetch(mutation, {
-      lines: [{ merchandiseId: state.selected.id, quantity: state.qty }]
+    detectBuyerCountry().then(function (country) {
+      return shopifyFetch(mutation, {
+        lines: [{ merchandiseId: state.selected.id, quantity: state.qty }],
+        country: country
+      });
     }).then(function (res) {
       var payload = res.data && res.data.cartCreate;
       if (payload && payload.cart && payload.cart.checkoutUrl) {
@@ -810,6 +813,14 @@
       addCartBtn.textContent = 'Añadir al carrito';
     });
   });
+
+  function detectBuyerCountry() {
+    // Detecta el país real del visitante por IP; si falla, España como respaldo (mercado base de la tienda).
+    return fetch('https://ipapi.co/json/', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { return (d && d.country_code) ? d.country_code : 'ES'; })
+      .catch(function () { return 'ES'; });
+  }
 
   loadProduct();
 })();
