@@ -158,6 +158,40 @@
   .variant-opt small{display:block;font-weight:500;color:var(--muted);font-size:12px;margin-top:2px;}
   .variant-opt.active{border-color:var(--accent);background:#EEF2FF;color:var(--accent-ink);}
 
+  .variant-block{margin-bottom:22px;}
+  .field-label{font-size:13.5px;font-weight:600;color:var(--muted);margin-bottom:9px;display:block;}
+  .variant-options{display:flex;gap:10px;flex-wrap:wrap;}
+  .variant-opt{
+    border:1.5px solid var(--line);background:#fff;
+    border-radius:12px;padding:11px 16px;
+    font-size:14px;font-weight:600;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .variant-opt small{display:block;font-weight:500;color:var(--muted);font-size:12px;margin-top:2px;}
+  .variant-opt.active{border-color:var(--accent);background:#EEF2FF;color:var(--accent-ink);}
+  .variant-opt:disabled{opacity:0.4;cursor:not-allowed;}
+
+  .buy-row{display:flex;gap:12px;margin-bottom:0;}
+  .qty{
+    display:flex;align-items:center;border:1.5px solid var(--line);
+    border-radius:100px;background:#fff;overflow:hidden;
+  }
+  .qty button{
+    width:42px;height:48px;border:none;background:none;font-size:18px;color:var(--ink);
+  }
+  .qty button:hover{background:#F0F1F5;}
+  .qty span{width:32px;text-align:center;font-weight:600;font-size:15px;}
+  .add-cart{
+    flex:1;border:none;background:var(--ink);color:#fff;
+    border-radius:100px;font-size:15.5px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    transition:transform .15s ease, background .15s ease;
+    position:relative;overflow:hidden;
+  }
+  .add-cart:disabled{opacity:0.5;cursor:wait;}
+  .add-cart:hover{transform:translateY(-1px);background:var(--accent-ink);}
+  .add-cart:active{transform:translateY(0);}
+
   .buy-widget{margin-bottom:26px;min-height:56px;}
   .buy-widget > div{width:100% !important;max-width:100% !important;margin:0 !important;}
   .add-cart{
@@ -382,9 +416,29 @@
         <h1 class="title">Convierte cada cliente contento en una reseña de Google</h1>
         <p class="subtitle">Reviu es una placa con tecnología NFC: tu cliente solo acerca el móvil y su navegador abre directo tu ficha de Google, lista para dejar las 5 estrellas. Sin apps, sin QR imposibles de leer, sin excusas.</p>
 
-        <div class="buy-widget" id="comprar">
-          <div id="product-component-1789028099041"></div>
+        <div class="price-row">
+          <span class="price" id="priceTag">Cargando precio…</span>
+          <span class="price-old" id="priceOld" style="display:none;"></span>
         </div>
+
+        <div class="variant-block">
+          <span class="field-label">Elige tu pack</span>
+          <div class="variant-options" id="variantOptions">
+            <span style="font-size:13.5px;color:var(--muted);">Cargando opciones…</span>
+          </div>
+        </div>
+
+        <div class="buy-row" id="comprar">
+          <div class="qty">
+            <button id="qtyMinus" aria-label="Reducir cantidad">−</button>
+            <span id="qtyVal">1</span>
+            <button id="qtyPlus" aria-label="Aumentar cantidad">+</button>
+          </div>
+          <button class="add-cart" id="addCartBtn" disabled>
+            Añadir al carrito
+          </button>
+        </div>
+        <p id="cartMsg" style="font-size:13px;color:var(--muted);margin-top:10px;min-height:16px;"></p>
 
         <div class="trust-row">
           <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2EBD59" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Envío 24–48h en península</span>
@@ -617,188 +671,148 @@
   });
 </script>
 
-<!-- Shopify Buy Button -->
-<script type="text/javascript">
-/*<![CDATA[*/
+<script>
 (function () {
-  var scriptURL = 'https://sdks.shopifycdn.com/buy-button/latest/buy-button-storefront.min.js';
-  if (window.ShopifyBuy) {
-    if (window.ShopifyBuy.UI) {
-      ShopifyBuyInit();
-    } else {
-      loadScript();
-    }
-  } else {
-    loadScript();
+  var SHOPIFY_DOMAIN = 'dhgxvd-xh.myshopify.com';
+  var STOREFRONT_TOKEN = 'b0ec7a591fd317dd6e552d834465d9c8';
+  var API_VERSION = '2026-01';
+  var PRODUCT_ID = 'gid://shopify/Product/10772823507253';
+  var ENDPOINT = 'https://' + SHOPIFY_DOMAIN + '/api/' + API_VERSION + '/graphql.json';
+
+  var state = { variants: [], selected: null, qty: 1 };
+
+  var priceTag = document.getElementById('priceTag');
+  var priceOld = document.getElementById('priceOld');
+  var variantOptionsEl = document.getElementById('variantOptions');
+  var qtyVal = document.getElementById('qtyVal');
+  var addCartBtn = document.getElementById('addCartBtn');
+  var cartMsg = document.getElementById('cartMsg');
+
+  function fmtMoney(amount, currencyCode) {
+    var n = parseFloat(amount);
+    return n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + (currencyCode === 'EUR' ? '€' : currencyCode);
   }
-  function loadScript() {
-    var script = document.createElement('script');
-    script.async = true;
-    script.src = scriptURL;
-    (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(script);
-    script.onload = ShopifyBuyInit;
+
+  function shopifyFetch(query, variables) {
+    return fetch(ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN
+      },
+      body: JSON.stringify({ query: query, variables: variables || {} })
+    }).then(function (res) { return res.json(); });
   }
-  function ShopifyBuyInit() {
-    var client = ShopifyBuy.buildClient({
-      domain: 'dhgxvd-xh.myshopify.com',
-      storefrontAccessToken: '3949b9e8cb1b999e3c68e18f8e1fac2e',
+
+  function loadProduct() {
+    var query = 'query GetProduct($id: ID!) {' +
+      ' product(id: $id) {' +
+      '   title' +
+      '   variants(first: 20) {' +
+      '     edges {' +
+      '       node {' +
+      '         id' +
+      '         title' +
+      '         availableForSale' +
+      '         quantityAvailable' +
+      '         price { amount currencyCode }' +
+      '         compareAtPrice { amount currencyCode }' +
+      '         selectedOptions { name value }' +
+      '       }' +
+      '     }' +
+      '   }' +
+      ' }' +
+      '}';
+
+    shopifyFetch(query, { id: PRODUCT_ID }).then(function (res) {
+      if (!res.data || !res.data.product) {
+        var detail = (res.errors && res.errors[0] && res.errors[0].message) || 'respuesta vacía';
+        cartMsg.textContent = 'No se pudo cargar el producto (' + detail + ').';
+        console.error('Shopify Storefront API error:', res);
+        return;
+      }
+      state.variants = res.data.product.variants.edges.map(function (e) { return e.node; });
+      renderVariants();
+    }).catch(function () {
+      cartMsg.textContent = 'Error de conexión al cargar el producto.';
     });
-    ShopifyBuy.UI.onReady(client).then(function (ui) {
-      ui.createComponent('product', {
-        id: '10772823507253',
-        node: document.getElementById('product-component-1789028099041'),
-        moneyFormat: '%E2%82%AC%7B%7Bamount%7D%7D',
-        options: {
-          "product": {
-            "styles": {
-              "product": {
-                "width": "100%",
-                "max-width": "100%",
-                "margin-left": "0",
-                "margin-bottom": "0",
-                "text-align": "left",
-                "font-family": "'Instrument Sans', 'Inter', sans-serif"
-              },
-              "carousel-button": { "display": "none" },
-              "title": { "display": "none" },
-              "price": {
-                "font-family": "'Instrument Sans', 'Inter', sans-serif",
-                "font-weight": "700",
-                "font-size": "32px",
-                "color": "#131A2B"
-              },
-              "compareAt": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "18px",
-                "color": "#5B6472"
-              },
-              "unitPrice": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "13px",
-                "color": "#5B6472"
-              },
-              "description": { "display": "none" },
-              "option": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "13.5px",
-                "font-weight": "600",
-                "color": "#5B6472"
-              },
-              "select": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "15px",
-                "border-radius": "12px",
-                "border": "1.5px solid #E3E6EE",
-                "padding": "11px 16px",
-                "color": "#131A2B"
-              },
-              "quantityInput": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "15px",
-                "border-radius": "100px",
-                "border": "1.5px solid #E3E6EE",
-                "padding-top": "12px",
-                "padding-bottom": "12px"
-              },
-              "button": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "15.5px",
-                "font-weight": "700",
-                "padding-top": "16.5px",
-                "padding-bottom": "16.5px",
-                ":hover": { "background-color": "#0F1E5C" },
-                "background-color": "#131A2B",
-                ":focus": { "background-color": "#0F1E5C" },
-                "border-radius": "100px",
-                "padding-left": "30px",
-                "padding-right": "30px"
-              }
-            },
-            "layout": "vertical",
-            "contents": { "img": false, "imgWithCarousel": false, "title": false, "description": false },
-            "width": "100%",
-            "text": { "button": "Añadir al carrito" }
-          },
-          "productSet": {
-            "styles": { "products": { "@media (min-width: 601px)": { "margin-left": "-20px" } } }
-          },
-          "modalProduct": {
-            "contents": { "img": false, "imgWithCarousel": true, "button": false, "buttonWithQuantity": true },
-            "styles": {
-              "product": { "@media (min-width: 601px)": { "max-width": "100%", "margin-left": "0px", "margin-bottom": "0px" } },
-              "title": {
-                "font-family": "'Instrument Sans', 'Inter', sans-serif",
-                "font-weight": "700",
-                "font-size": "24px",
-                "color": "#131A2B"
-              },
-              "price": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "18px",
-                "color": "#131A2B"
-              },
-              "compareAt": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "15px",
-                "color": "#5B6472"
-              },
-              "unitPrice": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "13px",
-                "color": "#5B6472"
-              },
-              "description": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "14px",
-                "color": "#5B6472"
-              },
-              "button": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "17px",
-                "padding-top": "16.5px",
-                "padding-bottom": "16.5px",
-                ":hover": { "background-color": "#0F1E5C" },
-                "background-color": "#131A2B",
-                ":focus": { "background-color": "#0F1E5C" },
-                "border-radius": "100px",
-                "padding-left": "30px",
-                "padding-right": "30px"
-              }
-            },
-            "text": { "button": "Añadir al carrito" }
-          },
-          "option": {},
-          "cart": {
-            "styles": {
-              "button": {
-                "font-family": "'Inter', sans-serif",
-                "font-size": "17px",
-                "padding-top": "16.5px",
-                "padding-bottom": "16.5px",
-                ":hover": { "background-color": "#0F1E5C" },
-                "background-color": "#131A2B",
-                ":focus": { "background-color": "#0F1E5C" },
-                "border-radius": "100px"
-              }
-            },
-            "text": { "total": "Subtotal", "button": "Finalizar compra" }
-          },
-          "toggle": {
-            "styles": {
-              "toggle": {
-                "background-color": "#131A2B",
-                ":hover": { "background-color": "#0F1E5C" },
-                ":focus": { "background-color": "#0F1E5C" }
-              },
-              "count": { "font-size": "17px" }
-            }
-          }
-        },
+  }
+
+  function renderVariants() {
+    variantOptionsEl.innerHTML = '';
+    state.variants.forEach(function (variant, idx) {
+      var btn = document.createElement('button');
+      btn.className = 'variant-opt' + (idx === 0 ? ' active' : '');
+      btn.type = 'button';
+      var label = variant.selectedOptions && variant.selectedOptions[0] ? variant.selectedOptions[0].value : variant.title;
+      btn.innerHTML = label;
+      if (!variant.availableForSale) { btn.disabled = true; }
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.variant-opt').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        selectVariant(variant);
       });
+      variantOptionsEl.appendChild(btn);
     });
+    if (state.variants.length) { selectVariant(state.variants[0]); }
   }
+
+  function selectVariant(variant) {
+    state.selected = variant;
+    priceTag.textContent = fmtMoney(variant.price.amount, variant.price.currencyCode);
+    if (variant.compareAtPrice && parseFloat(variant.compareAtPrice.amount) > parseFloat(variant.price.amount)) {
+      priceOld.style.display = 'inline';
+      priceOld.textContent = fmtMoney(variant.compareAtPrice.amount, variant.compareAtPrice.currencyCode);
+    } else {
+      priceOld.style.display = 'none';
+    }
+    addCartBtn.disabled = !variant.availableForSale;
+    addCartBtn.textContent = variant.availableForSale ? 'Añadir al carrito' : 'Agotado';
+  }
+
+  document.getElementById('qtyMinus').addEventListener('click', function () {
+    state.qty = Math.max(1, state.qty - 1);
+    qtyVal.textContent = state.qty;
+  });
+  document.getElementById('qtyPlus').addEventListener('click', function () {
+    state.qty = Math.min(50, state.qty + 1);
+    qtyVal.textContent = state.qty;
+  });
+
+  addCartBtn.addEventListener('click', function () {
+    if (!state.selected) { return; }
+    addCartBtn.disabled = true;
+    addCartBtn.textContent = 'Creando pedido…';
+    cartMsg.textContent = '';
+
+    var mutation = 'mutation CartCreate($lines: [CartLineInput!]!) {' +
+      ' cartCreate(input: { lines: $lines }) {' +
+      '   cart { id checkoutUrl }' +
+      '   userErrors { field message }' +
+      ' }' +
+      '}';
+
+    shopifyFetch(mutation, {
+      lines: [{ merchandiseId: state.selected.id, quantity: state.qty }]
+    }).then(function (res) {
+      var payload = res.data && res.data.cartCreate;
+      if (payload && payload.cart && payload.cart.checkoutUrl) {
+        window.location.href = payload.cart.checkoutUrl;
+      } else {
+        var msg = (payload && payload.userErrors && payload.userErrors[0] && payload.userErrors[0].message) || 'No se pudo crear el carrito.';
+        cartMsg.textContent = msg;
+        addCartBtn.disabled = false;
+        addCartBtn.textContent = 'Añadir al carrito';
+      }
+    }).catch(function () {
+      cartMsg.textContent = 'Error de conexión al crear el pedido. Inténtalo de nuevo.';
+      addCartBtn.disabled = false;
+      addCartBtn.textContent = 'Añadir al carrito';
+    });
+  });
+
+  loadProduct();
 })();
-/*]]>*/
 </script>
 
 </body>
