@@ -77,6 +77,7 @@
     transition:transform .15s ease;
   }
   .cart-btn:hover{transform:translateY(-1px);}
+  .cart-btn.active{background:var(--accent);}
   .cart-count{
     background:var(--coral);color:#fff;
     width:19px;height:19px;border-radius:50%;
@@ -391,7 +392,7 @@
       </span>
       Reviu
     </div>
-    <a href="#comprar" class="cart-btn">Comprar ahora</a>
+    <button id="navCartBtn" class="cart-btn">Ver carrito <span id="navCartCount">(0)</span></button>
   </div>
 </header>
 
@@ -640,7 +641,7 @@
           <h2>Pon Reviu en tu mostrador esta semana</h2>
           <p>Un pago único, sin cuotas, y un aumento real de reseñas desde el primer día.</p>
         </div>
-        <a href="#comprar" class="add-cart" style="text-decoration:none;">Comprar ahora</a>
+        <a href="#comprar" class="add-cart" style="text-decoration:none;">Elegir tu pack</a>
       </div>
     </div>
   </section>
@@ -779,39 +780,92 @@
     qtyVal.textContent = state.qty;
   });
 
-  addCartBtn.addEventListener('click', function () {
+  var navCartBtn = document.getElementById('navCartBtn');
+  var navCartCount = document.getElementById('navCartCount');
+  var CART_STORAGE_KEY = 'reviu_cart_id';
+  var cart = { id: null, checkoutUrl: null, totalQuantity: 0 };
+
+  function cartFieldsQuery() {
+    return ' id checkoutUrl totalQuantity ';
+  }
+
+  function updateCartUI() {
+    navCartCount.textContent = '(' + cart.totalQuantity + ')';
+    navCartBtn.classList.toggle('active', cart.totalQuantity > 0);
+  }
+
+  function restoreCart() {
+    var savedId = localStorage.getItem(CART_STORAGE_KEY);
+    if (!savedId) { return; }
+    var query = 'query GetCart($id: ID!) { cart(id: $id) {' + cartFieldsQuery() + '} }';
+    shopifyFetch(query, { id: savedId }).then(function (res) {
+      if (res.data && res.data.cart) {
+        cart = res.data.cart;
+        updateCartUI();
+      } else {
+        localStorage.removeItem(CART_STORAGE_KEY);
+      }
+    }).catch(function () {});
+  }
+
+  function addToCart() {
     if (!state.selected) { return; }
     addCartBtn.disabled = true;
-    addCartBtn.textContent = 'Creando pedido…';
+    addCartBtn.textContent = 'Añadiendo…';
     cartMsg.textContent = '';
 
-    var mutation = 'mutation CartCreate($lines: [CartLineInput!]!, $country: CountryCode) {' +
-      ' cartCreate(input: { lines: $lines, buyerIdentity: { countryCode: $country } }) {' +
-      '   cart { id checkoutUrl }' +
-      '   userErrors { field message }' +
-      ' }' +
-      '}';
+    var linesInput = [{ merchandiseId: state.selected.id, quantity: state.qty }];
 
-    detectBuyerCountry().then(function (country) {
-      return shopifyFetch(mutation, {
-        lines: [{ merchandiseId: state.selected.id, quantity: state.qty }],
-        country: country
-      });
-    }).then(function (res) {
-      var payload = res.data && res.data.cartCreate;
-      if (payload && payload.cart && payload.cart.checkoutUrl) {
-        window.location.href = payload.cart.checkoutUrl;
+    var request;
+    if (cart.id) {
+      var addMutation = 'mutation CartLinesAdd($cartId: ID!, $lines: [CartLineInput!]!) {' +
+        ' cartLinesAdd(cartId: $cartId, lines: $lines) {' +
+        '   cart {' + cartFieldsQuery() + '}' +
+        '   userErrors { field message }' +
+        ' }' +
+        '}';
+      request = shopifyFetch(addMutation, { cartId: cart.id, lines: linesInput })
+        .then(function (res) { return { payload: res.data && res.data.cartLinesAdd, res: res }; });
+    } else {
+      var createMutation = 'mutation CartCreate($lines: [CartLineInput!]!, $country: CountryCode) {' +
+        ' cartCreate(input: { lines: $lines, buyerIdentity: { countryCode: $country } }) {' +
+        '   cart {' + cartFieldsQuery() + '}' +
+        '   userErrors { field message }' +
+        ' }' +
+        '}';
+      request = detectBuyerCountry().then(function (country) {
+        return shopifyFetch(createMutation, { lines: linesInput, country: country });
+      }).then(function (res) { return { payload: res.data && res.data.cartCreate, res: res }; });
+    }
+
+    request.then(function (result) {
+      var payload = result.payload;
+      if (payload && payload.cart) {
+        cart = payload.cart;
+        localStorage.setItem(CART_STORAGE_KEY, cart.id);
+        updateCartUI();
+        cartMsg.textContent = '✓ Añadido al carrito (' + cart.totalQuantity + ' en total).';
       } else {
-        var msg = (payload && payload.userErrors && payload.userErrors[0] && payload.userErrors[0].message) || 'No se pudo crear el carrito.';
+        var msg = (payload && payload.userErrors && payload.userErrors[0] && payload.userErrors[0].message) || 'No se pudo añadir al carrito.';
         cartMsg.textContent = msg;
-        addCartBtn.disabled = false;
-        addCartBtn.textContent = 'Añadir al carrito';
       }
+      addCartBtn.disabled = false;
+      addCartBtn.textContent = 'Añadir al carrito';
     }).catch(function () {
-      cartMsg.textContent = 'Error de conexión al crear el pedido. Inténtalo de nuevo.';
+      cartMsg.textContent = 'Error de conexión al añadir al carrito. Inténtalo de nuevo.';
       addCartBtn.disabled = false;
       addCartBtn.textContent = 'Añadir al carrito';
     });
+  }
+
+  addCartBtn.addEventListener('click', addToCart);
+
+  navCartBtn.addEventListener('click', function () {
+    if (cart.checkoutUrl && cart.totalQuantity > 0) {
+      window.location.href = cart.checkoutUrl;
+    } else {
+      document.getElementById('comprar').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   });
 
   function detectBuyerCountry() {
@@ -822,6 +876,7 @@
       .catch(function () { return 'ES'; });
   }
 
+  restoreCart();
   loadProduct();
 })();
 </script>
